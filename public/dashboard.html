@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🤖 SnapBot — Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { background: #0f1115; color: #e8eaed; padding: 20px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  h1 { font-size: 1.4rem; }
+  .pill { padding: 4px 14px; border-radius: 20px; font-size: .8rem; font-weight: 600; }
+  .pill.on  { background: #103a1e; color: #4ade80; border: 1px solid #22c55e; }
+  .pill.off { background: #3a1010; color: #f87171; border: 1px solid #ef4444; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #171a21; border: 1px solid #262b36; border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: 1px; color: #8b93a3; margin-bottom: 12px; }
+  button { cursor: pointer; border: none; border-radius: 9px; padding: 10px 16px; font-weight: 600; font-size: .9rem; transition: .15s; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-start { background: #22c55e; color: #052e12; }
+  .btn-stop  { background: #ef4444; color: #fff; }
+  .btn-restart { background: #3b82f6; color: #fff; }
+  .btn-send  { background: #fffc00; color: #111; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  input, textarea { background: #0f1115; border: 1px solid #333a48; color: #e8eaed; border-radius: 9px; padding: 10px; width: 100%; font-size: .9rem; resize: vertical; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat { background: #0f1115; border-radius: 10px; padding: 12px; text-align: center; }
+  .stat b { display: block; font-size: 1.4rem; color: #fffc00; }
+  .stat span { font-size: .75rem; color: #8b93a3; }
+  #console { background: #0a0c10; border-radius: 10px; padding: 12px; height: 420px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: .8rem; line-height: 1.55; }
+  .l-info    { color: #aab3c2; } .l-send { color: #ffe14d; } .l-recv { color: #6fe3ff; }
+  .l-error   { color: #ff6b6b; } .l-warn { color: #ffb35c; } .l-success { color: #7dff9a; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  td { padding: 7px 10px; border-bottom: 1px solid #222733; }
+  td:first-child { color: #fffc00; font-family: monospace; white-space: nowrap; }
+  .label { font-size: .75rem; color: #8b93a3; margin: 10px 0 5px; }
+  .status-indicator {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px; background: rgba(255,255,255,.06);
+    border-radius: 8px; margin-bottom: 10px;
+  }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: #f39c12;
+    display: inline-block;
+  }
+  .status-dot.connected { background: #2ecc71; }
+  .status-dot.disconnected { background: #e74c3c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>👻 SnapBot Dashboard</h1>
+  <span id="statusPill" class="pill off">● Hors ligne</span>
+  <span id="uptime" style="color:#8b93a3;font-size:.85rem;margin-left:auto;"></span>
+</header>
+<div class="status-indicator">
+  <span class="status-dot disconnected" id="statusDot"></span>
+  <span id="connectionText">Déconnecté</span>
+</div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>⚙️ Contrôles</h2>
+      <div class="row">
+        <button class="btn-start" id="btnStart">▶ Démarrer</button>
+        <button class="btn-stop" id="btnStop">■ Arrêter</button>
+        <button class="btn-restart" id="btnRestart">↻ Redémarrer</button>
+      </div>
+      <div class="label">Groupe à surveiller</div>
+      <div class="row">
+        <input id="groupName" placeholder="Zentest">
+        <button class="btn-send" onclick="saveGroup()">💾</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📊 Statistiques</h2>
+      <div class="stats">
+        <div class="stat"><b id="sSent">0</b><span>Messages envoyés</span></div>
+        <div class="stat"><b id="sCmds">0</b><span>Commandes traitées</span></div>
+        <div class="stat"><b id="sErr">0</b><span>Erreurs</span></div>
+        <div class="stat"><b id="sUp">—</b><span>Uptime</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>✉️ Envoyer un message</h2>
+      <textarea id="msg" rows="2" placeholder="Message du bot..."></textarea>
+      <div class="row" style="margin-top:8px;"><button class="btn-send" style="flex:1" onclick="sendMsg()">Envoyer 📤</button></div>
+      <div class="label">💬 Mentionner quelqu'un (@ natif)</div>
+      <div class="row">
+        <input id="mUser" placeholder="Pseudo" style="flex:1">
+        <input id="mMsg" placeholder="Message" style="flex:2">
+        <button class="btn-send" onclick="sendMention()">@</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📖 Commandes</h2>
+      <table id="cmdTable"></table>
+    </div>
+
+    <div class="card">
+      <h2>🔌 Plugins</h2>
+      <div id="pluginList"><span style="color:#8b93a3">Chargement...</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:0">
+    <h2>📟 Console en direct</h2>
+    <div id="console"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let startAt = 0;
+
+/* --- Temps réel (SSE) --- */
+const es = new EventSource('/api/events');
+es.addEventListener('log', e => { const l = JSON.parse(e.data); addLog(l); });
+es.addEventListener('status', e => updateStatus(JSON.parse(e.data)));
+
+function addLog(l) {
+  const t = new Date(l.time).toLocaleTimeString('fr-FR');
+  const div = document.createElement('div');
+  div.className = 'l-' + l.level;
+  div.textContent = `[${t}] ${l.msg}`;
+  $('console').appendChild(div);
+  $('console').scrollTop = $('console').scrollHeight;
+}
+
+function updateConnectionStatus(connected) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('connectionText');
+  dot.classList.remove('connected', 'disconnected');
+  if (connected) {
+    dot.classList.add('connected');
+    text.textContent = 'Connecté';
+  } else {
+    dot.classList.add('disconnected');
+    text.textContent = 'Déconnecté';
+  }
+}
+
+function updateStatus(s) {
+  const pill = $('statusPill');
+  pill.className = 'pill ' + (s.running ? 'on' : 'off');
+  pill.textContent = s.running ? '● En ligne' : '● Hors ligne';
+  updateConnectionStatus(Boolean(s.running));
+  $('btnStart').disabled = s.running;
+  $('btnStop').disabled = $('btnRestart').disabled = !s.running;
+  $('groupName').value = s.group;
+  $('sSent').textContent = s.stats.sent;
+  $('sCmds').textContent = s.stats.cmds;
+  $('sErr').textContent = s.stats.errors;
+  startAt = s.running ? Date.now() - s.uptimeSec * 1000 : 0;
+}
+
+setInterval(() => {
+  if (!startAt) { $('sUp').textContent = '—'; $('uptime').textContent = ''; return; }
+  const s = Math.floor((Date.now() - startAt) / 1000);
+  const str = `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m ${s%60}s`;
+  $('sUp').textContent = str; $('uptime').textContent = '⏱️ ' + str;
+}, 1000);
+
+/* --- Actions --- */
+const post = (url, body) => fetch(url, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+});
+ $('btnStart').onclick   = () => post('/api/start');
+ $('btnStop').onclick    = () => post('/api/stop');
+ $('btnRestart').onclick = () => post('/api/restart');
+
+async function sendMsg() {
+  if (!$('msg').value.trim()) return;
+  const r = await post('/api/send', { message: $('msg').value });
+  if (r.ok) $('msg').value = '';
+}
+async function sendMention() {
+  if (!$('mUser').value.trim()) return;
+  const r = await post('/api/mention', { user: $('mUser').value, message: $('mMsg').value });
+  if (r.ok) { $('mUser').value = ''; $('mMsg').value = ''; }
+}
+async function saveGroup() { await post('/api/config', { groupName: $('groupName').value }); }
+ $('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+
+/* --- Plugins --- */
+async function loadPlugins() {
+  try {
+    const ps = await (await fetch('/api/plugins')).json();
+    $('pluginList').innerHTML = ps.map(p => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #222733">
+        <span>${p.enabled ? '🟢' : '🔴'}</span>
+        <div style="flex:1">
+          <b>${p.name}</b> <small style="color:#8b93a3">v${p.version} — ${p.commands.length} cmd</small><br>
+          <small style="color:#8b93a3">${p.description}</small>
+        </div>
+        <button class="btn-send" style="padding:6px 12px;font-size:.8rem" onclick="togglePlugin('${p.name}', ${!p.enabled})">${p.enabled ? 'Désactiver' : 'Activer'}</button>
+        <button class="btn-send" style="padding:6px 12px;font-size:.8rem" onclick="reloadPlugin('${p.name}')">↻</button>
+      </div>`).join('') || '<span style="color:#8b93a3">Aucun plugin dans ./plugins/</span>';
+  } catch (e) {
+    $('pluginList').innerHTML = '<span style="color:#ff6b6b">Erreur chargement plugins</span>';
+  }
+}
+async function togglePlugin(name, enabled) {
+  await post('/api/plugins/toggle', { name, enabled });
+  await loadPlugins();
+}
+async function reloadPlugin(name) {
+  await post('/api/plugins/reload', { name });
+  await loadPlugins();
+}
+
+/* --- Init --- */
+(async () => {
+  const st = await (await fetch('/api/status')).json();
+  updateStatus(st);
+  const logs = await (await fetch('/api/logs')).json();
+  logs.forEach(addLog);
+  const cmds = await (await fetch('/api/commands')).json();
+  $('cmdTable').innerHTML = cmds.map(c => `<tr><td>${c.cmd}</td><td>${c.desc}</td></tr>`).join('');
+  loadPlugins();
+})();
+</script>
+</body>
+</html>
