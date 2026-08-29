@@ -1,3 +1,4 @@
 node_modules/
 snap_profiles/
 snap-session/
+.gitignore

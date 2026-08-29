@@ -408,7 +408,10 @@ class SnapchatBot extends EventEmitter {
             this.log('info', '↗️ Redirection vers les chats (' + CONFIG.webUrl + ')...');
             await page.goto(CONFIG.webUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         }
-        await wait(6000);
+        // Attendre le chargement complet au lieu d'un fixe 6s
+        try {
+            await page.waitForFunction(() => document.readyState === 'complete', { timeout: 30000 });
+        } catch (_) {}
         this.log('success', '✅ Connecté !');
     }
 
@@ -423,6 +426,47 @@ class SnapchatBot extends EventEmitter {
             return false;
         }).catch(() => false);
         if (clicked) { this.log('info', '🍪 Cookies acceptés'); await wait(1500); }
+    }
+
+    async waitForAppReady(timeoutMs = 30000) {
+        const page = this.page;
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                const ready = await page.evaluate(() => {
+                    if (document.readyState !== 'complete') return false;
+                    const contentArea = document.querySelector('[contenteditable="true"], textarea, div[role="textbox"]');
+                    return !!contentArea;
+                });
+                if (ready) return true;
+            } catch (_) {}
+            await wait(500);
+        }
+        return false;
+    }
+
+    async clickConversationInSidebar(groupName) {
+        const page = this.page;
+        const clicked = await page.evaluate((txt) => {
+            const normalized = txt.toLowerCase();
+            const sidebar = [...document.querySelectorAll('[role="navigation"], aside, nav, [class*="sidebar" i]')][0];
+            if (!sidebar) return false;
+            const items = sidebar.querySelectorAll('div, span, li, a, button, [role="button"]');
+            for (const item of items) {
+                const text = (item.textContent || '').trim().toLowerCase();
+                if (text && text.includes(normalized)) {
+                    let target = item;
+                    for (let k = 0; k < 4 && target.parentElement; k++) {
+                        if (target.hasAttribute('tabindex') || target.getAttribute('role') === 'button' || ['A', 'BUTTON', 'LI'].includes(target.tagName)) break;
+                        target = target.parentElement;
+                    }
+                    target.click();
+                    return true;
+                }
+            }
+            return false;
+        }, groupName);
+        return clicked;
     }
 
     async waitForManualLogin(timeoutMs = 180000) {
@@ -445,66 +489,89 @@ class SnapchatBot extends EventEmitter {
     }
 
     /* =====================================================
-       OUVERTURE DU GROUPE (logique qui marche, conservée)
+       OUVERTURE DU GROUPE (logique améliorée)
        ===================================================== */
     async openGroup(groupName) {
         const page = this.page;
-        this.log('info', `🔍 Recherche du groupe "${groupName}"...`);
+        this.log('info', `🔍 Ouverture du groupe "${groupName}"...`);
 
-        const searchSel = 'input[placeholder*="echerche" i], input[placeholder*="earch" i], input[type="search"]';
-        let searchInput = await page.$(searchSel);
-        if (!searchInput) {
-            const clicked = await page.evaluate(() => {
-                const el = [...document.querySelectorAll('[aria-label], button, [role="button"]')]
-                    .find(e => /recherche|search/i.test(e.getAttribute('aria-label') || e.textContent || ''));
-                if (el) { el.click(); return true; }
-                return false;
-            });
-            if (!clicked) { await saveDebug(page, 'search-btn'); this.log('error', '❌ Bouton de recherche introuvable.'); return false; }
-            await wait(1000);
-            searchInput = await page.$(searchSel);
-        }
-        if (!searchInput) { await saveDebug(page, 'search-input'); this.log('error', '❌ Champ de recherche introuvable.'); return false; }
+        // 0) Laisser l'appli charger ( clé sur connexion lente / Ubuntu )
+        await this.waitForAppReady(30000);
+        // Une bannière cookies peut bloquer l'UI même après login
+        await this.acceptCookies();
 
-        await searchInput.click({ clickCount: 3 });
-        await searchInput.type(groupName, { delay: 60 });
-        await wait(2500);
-
-        const clicked = await page.evaluate(async (txt) => {
-            const norm = txt.toLowerCase();
-            const candidates = [...document.querySelectorAll('div, span, p, li, a')]
-                .filter(e => {
-                    const t = (e.textContent || '').trim().toLowerCase();
-                    if (!t || !t.includes(norm)) return false;
-                    return e.querySelectorAll('*').length <= 4;
-                })
-                .sort((a, b) => a.textContent.length - b.textContent.length)
-                .slice(0, 5);
-            for (const el of candidates) {
-                let target = el;
-                for (let k = 0; k < 3 && target.parentElement; k++) {
-                    const tag = target.tagName;
-                    if (tag === 'A' || tag === 'BUTTON' || target.getAttribute('role') === 'button' || target.hasAttribute('tabindex')) break;
-                    target = target.parentElement;
-                }
-                target.click(); el.click();
-                await new Promise(r => setTimeout(r, 700));
-                if (document.querySelector('div[contenteditable="true"], textarea')) return true;
-            }
-            return false;
-        }, groupName);
-
-        if (clicked) { this.log('success', `✅ Groupe "${groupName}" ouvert.`); return true; }
-
-        await page.keyboard.press('Enter');
-        await wait(1500);
-        if (await page.$('div[contenteditable="true"], textarea')) {
-            this.log('success', `✅ Groupe "${groupName}" ouvert (via Entrée).`);
+        // 1) Clic direct dans la sidebar (pas besoin de recherche !)
+        if (await this.clickConversationInSidebar(groupName)) {
+            this.log('success', `✅ Groupe "${groupName}" ouvert (sidebar).`);
             return true;
         }
 
-        await saveDebug(page, 'group');
-        this.log('error', `❌ Groupe "${groupName}" introuvable.`);
+        // 2) Champ de recherche déjà visible ?
+        const searchSel = 'input[placeholder*="echerche" i], input[placeholder*="earch" i], input[type="search"]';
+        let searchInput = await page.$(searchSel);
+
+        // 3) Sinon : cliquer le bouton recherche (texte/aria OU icône en haut de sidebar)
+        if (!searchInput) {
+            await page.evaluate(() => {
+                // a) bouton avec texte/aria "search"
+                let btn = [...document.querySelectorAll('button, [role="button"], [aria-label]')]
+                    .find(e => /recherche|search/i.test(e.getAttribute('aria-label') || e.textContent || ''));
+                // b) sinon : bouton-icône (svg) en haut à gauche de la fenêtre
+                if (!btn) {
+                    btn = [...document.querySelectorAll('button, [role="button"]')]
+                        .filter(b => {
+                            const r = b.getBoundingClientRect();
+                            return r.x < 420 && r.y < 140 && r.width > 20 && b.querySelector('svg');
+                        })[0];
+                }
+                if (btn) btn.click();
+            });
+            await wait(1500);
+            searchInput = await page.$(searchSel);
+        }
+
+        if (searchInput) {
+            await searchInput.click({ clickCount: 3 });
+            await searchInput.type(groupName, { delay: 60 });
+            await wait(2500);
+
+            // Cliquer le résultat (heuristique d'origine qui marchait)
+            const clicked = await page.evaluate(async (txt) => {
+                const norm = txt.toLowerCase();
+                const candidates = [...document.querySelectorAll('div, span, p, li, a')]
+                    .filter(e => {
+                        const t = (e.textContent || '').trim().toLowerCase();
+                        if (!t || !t.startsWith(norm)) return false;
+                        return e.querySelectorAll('*').length <= 4;
+                    })
+                    .sort((a, b) => a.textContent.length - b.textContent.length)
+                    .slice(0, 5);
+                for (const el of candidates) {
+                    let target = el;
+                    for (let k = 0; k < 3 && target.parentElement; k++) {
+                        const tag = target.tagName;
+                        if (tag === 'A' || tag === 'BUTTON' || target.getAttribute('role') === 'button' || target.hasAttribute('tabindex')) break;
+                        target = target.parentElement;
+                    }
+                    target.click(); el.click();
+                    await new Promise(r => setTimeout(r, 1000));
+                    if (document.querySelector('div[contenteditable="true"], textarea')) return true;
+                }
+                return false;
+            }, groupName);
+
+            if (clicked) { this.log('success', `✅ Groupe "${groupName}" ouvert (recherche).`); return true; }
+
+            await page.keyboard.press('Enter');
+            await wait(1500);
+            if (await page.$('div[contenteditable="true"], textarea')) {
+                this.log('success', `✅ Groupe "${groupName}" ouvert (via Entrée).`);
+                return true;
+            }
+        }
+
+        await saveDebug(page, 'open-group');
+        this.log('error', `❌ Groupe "${groupName}" introuvable → regarde debug_open-group_*.png`);
         return false;
     }
 
